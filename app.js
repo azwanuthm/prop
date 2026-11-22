@@ -246,7 +246,7 @@ function updatePropellerGeometry() {
     scene.add(propellerGroup);
     
     // Kemas Kini Analisis Angka
-    updatePerformanceAnalysis(blades, span, rootChord, taper, twist * (180/Math.PI), rpm, vel);
+    updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twist * (180/Math.PI), rpm, vel);
 }
 
 // --- 6. Logik Acara (Event Listeners) ---
