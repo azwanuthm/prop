@@ -222,26 +222,33 @@ function updatePropellerGeometry() {
     geometry.translate(-pitchAxisX, 0, hubRadius);
     
     // BINA TATASUSUNAN JEJARI (Radial Array Group)
+    geometry.computeVertexNormals();
+    
+    // 1. Putar paksi bilah dari mendatar (Z) kepada menegak (Y)
+    geometry.rotateX(-Math.PI / 2);
+    
+    // 2. Anjak paksi untuk dicantumkan ke dinding luaran hab silinder
+    geometry.translate(-pitchAxisX, hubRadius, 0);
+    
+    // BINA TATASUSUNAN JEJARI (Radial Array Group)
     const angleStep = (Math.PI * 2) / blades;
     
     for(let i=0; i < blades; i++) {
         const bladeMesh = new THREE.Mesh(geometry, material);
-        // Putarkan supaya span menghala keluar (mendatar XZ) bukannya menegak
-        bladeMesh.rotation.x = Math.PI / 2;
-        // Posisikan mengelilingi aci Y (Y-Axis Shaft)
-        bladeMesh.rotation.y = angleStep * i;
-        
+        // Putarkan bilah mengelilingi paksi tujahan (Paksi Z)
+        bladeMesh.rotation.z = angleStep * i;
         propellerGroup.add(bladeMesh);
     }
     
-    // Bina Struktur Hab Tengah (Aci)
-    const hubGeometry = new THREE.CylinderGeometry(hubRadius, hubRadius, rootChord * 1.5, 32);
+    // Bina Struktur Hab Tengah (Aci) yang seimbang
+    const hubGeometry = new THREE.CylinderGeometry(hubRadius, hubRadius, rootChord * 1.2, 32);
     const hubMesh = new THREE.Mesh(hubGeometry, material);
+    // Putarkan silinder hab supaya menghala ke depan (Paksi Z)
+    hubMesh.rotation.x = Math.PI / 2;
     propellerGroup.add(hubMesh);
     
-    // Orientasi terakhir untuk memaparkan putaran secara mendatar di grid
-    propellerGroup.rotation.z = Math.PI / 2;
-    propellerGroup.position.y = span; // Angkat model dari atas lantai grid
+    // Angkat model dari atas lantai grid supaya terapung di tengah
+    propellerGroup.position.y = span / 1.5; 
     
     scene.add(propellerGroup);
     
