@@ -335,11 +335,12 @@ function animate() {
     // Putarkan kipas secara maya berdasarkan gelangsar RPM
     const rpm = parseFloat(document.getElementById('inpRPM').value);
     if(propellerGroup && rpm > 0) {
-        // Skala visual agar putaran tidak kelihatan patah balik (strobe effect)
-        propellerGroup.rotation.x -= (rpm / 1000) * 0.1;
+        // Skala visual agar putaran licin mengelilingi paksi tujahan (Z)
+        propellerGroup.rotation.z -= (rpm / 1000) * 0.1;
     }
     
     controls.update();
     renderer.render(scene, camera);
+}
 }
 animate();
