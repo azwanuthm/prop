@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Konfigurator Kipas (Propeller) 3D</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; }
+        .panel-scroll::-webkit-scrollbar { width: 6px; }
+        .panel-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <!-- Panel Input (Kiri) -->
+    <div class="absolute top-4 left-4 bg-white p-5 rounded-lg shadow-lg w-80 z-10 max-h-[95vh] overflow-y-auto panel-scroll">
+        <h1 class="text-xl font-bold mb-4 text-blue-600 border-b pb-2">Parameter Kipas</h1>
+        
+        <!-- Hab & Bilangan Bilah -->
+        <div class="mb-4">
+            <h2 class="text-sm font-semibold text-gray-700 mb-2">Konfigurasi Hab</h2>
+            <label class="block text-xs mb-1">Bilangan Bilah: <span id="valBlades" class="font-bold">2</span></label>
+            <input type="range" id="inpBlades" min="2" max="8" step="1" value="2" class="w-full mb-2">
+            
+            <label class="block text-xs mb-1">Jejari Hab (mm): <span id="valHub">15</span></label>
+            <input type="range" id="inpHub" min="10" max="50" step="1" value="15" class="w-full">
+        </div>
+
+        <!-- Geometri Bilah -->
+        <div class="mb-4 border-t pt-4">
+            <h2 class="text-sm font-semibold text-gray-700 mb-2">Geometri Bilah</h2>
+            <label class="block text-xs mb-1">Panjang Bilah (Span): <span id="valSpan">150</span></label>
+            <input type="range" id="inpSpan" min="50" max="300" value="150" class="w-full mb-2">
+            
+            <label class="block text-xs mb-1">Perentas Maksimum (Chord): <span id="valRoot">40</span></label>
+            <input type="range" id="inpRoot" min="20" max="100" value="40" class="w-full mb-2">
+            
+            <label class="block text-xs mb-1">Nisbah Tirus (Taper Ratio): <span id="valTaper">0.5</span></label>
+            <input type="range" id="inpTaper" min="0.1" max="1.0" step="0.05" value="0.5" class="w-full">
+        </div>
+
+        <!-- Aerodinamik -->
+        <div class="mb-4 border-t pt-4">
+            <h2 class="text-sm font-semibold text-gray-700 mb-2">Aerodinamik (Darjah)</h2>
+            <label class="block text-xs mb-1">Sudut Kisaran (Pitch/Twist): <span id="valTwist">15</span></label>
+            <input type="range" id="inpTwist" min="5" max="45" value="15" class="w-full mb-2">
+            
+            <label class="block text-xs mb-1">Sudut Sapuan (Sweep): <span id="valSweep">0</span></label>
+            <input type="range" id="inpSweep" min="-20" max="45" value="0" class="w-full">
+        </div>
+
+        <!-- Keadaan Operasi -->
+        <div class="mb-4 border-t pt-4 bg-blue-50 p-2 rounded">
+            <h2 class="text-sm font-semibold text-blue-800 mb-2">Keadaan Operasi Maya</h2>
+            <label class="block text-xs mb-1">Kelajuan Putaran (RPM): <span id="valRPM" class="font-bold">3000</span></label>
+            <input type="range" id="inpRPM" min="0" max="10000" step="100" value="3000" class="w-full mb-2">
+            
+            <label class="block text-xs mb-1">Halaju Hadapan (m/s): <span id="valVel" class="font-bold">0</span></label>
+            <input type="range" id="inpVel" min="0" max="50" step="0.5" value="0" class="w-full">
+            <p class="text-[9px] text-gray-500 mt-1">* 0 m/s = Ujian Hover/Statik</p>
+        </div>
+
+        <!-- Profil & Data -->
+        <div class="mb-4 border-t pt-4">
+            <h2 class="text-sm font-semibold text-gray-700 mb-2">Profil Aerodinamik</h2>
+            <select id="inpNACA" class="w-full p-2 border border-gray-300 rounded text-sm bg-gray-50 focus:ring-blue-500 focus:border-blue-500 mb-2">
+                <option value="0012">NACA 0012 (Simetri)</option>
+                <option value="2412">NACA 2412 (Kegunaan Am)</option>
+                <option value="4412" selected>NACA 4412 (Daya Angkat Tinggi)</option>
+                <option value="6412">NACA 6412 (Agresif)</option>
+            </select>
+            <input type="file" id="inpFile" accept=".dat,.txt" class="w-full text-xs text-gray-500 file:mr-3 file:py-1 file:px-2 file:rounded file:border-0 file:bg-gray-200 file:text-gray-700 hover:file:bg-gray-300 cursor-pointer"/>
+        </div>
+
+        <!-- Tindakan -->
+        <div class="flex flex-col gap-2 border-t pt-4">
+            <button id="btnExportSTL" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded text-sm transition shadow-sm">
+                Muat Turun Fail STL
+            </button>
+            <button id="btnReset" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded text-sm transition shadow-sm">
+                Tetapkan Semula
+            </button>
+        </div>
+    </div>
+
+    <!-- Panel Analisis (Kanan Atas) -->
+    <div class="absolute top-4 right-4 bg-gray-900 text-green-400 p-5 rounded-lg shadow-xl w-64 z-10 font-mono text-sm border border-gray-700">
+        <h2 class="text-white font-bold mb-3 border-b border-gray-700 pb-1">Analisis Prestasi</h2>
+        <div class="flex justify-between mb-2">
+            <span class="text-gray-400">Tujahan:</span>
+            <span id="outThrust">0.00 N</span>
+        </div>
+        <div class="flex justify-between mb-2">
+            <span class="text-gray-400">Daya Kilas:</span>
+            <span id="outTorque">0.00 Nm</span>
+        </div>
+        <div class="flex justify-between mb-2">
+            <span class="text-gray-400">Kuasa (Req):</span>
+            <span id="outPower">0.00 W</span>
+        </div>
+        <div class="flex justify-between font-bold text-yellow-400 border-t border-gray-700 pt-2 mt-2">
+            <span>Kecekapan (η):</span>
+            <span id="outEff">0.0 %</span>
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module" src="./app.js"></script>
+</body>
+</html>
