@@ -33,7 +33,7 @@ let customAirfoilPoints = null;
 let propellerGroup = null;
 
 const material = new THREE.MeshStandardMaterial({
-    color: 0x3b82f6,
+    color: 0x2563eb, // Biru pekat industri
     roughness: 0.3,
     metalness: 0.2,
     side: THREE.DoubleSide
@@ -107,14 +107,11 @@ function generateNACAShape(chord, nacaCode, numPoints = 80) {
     return shape;
 }
 
-// --- 4. Kalkulator Analisis (BEMT Proxy) ---
 function updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twistDeg, rpm, vel) {
-    const n = rpm / 60; // Pusingan sesaat (RPS)
-    
-    // Kiraan Luas Rentas (Estimate)
+    const n = rpm / 60; 
     const spanM = span / 1000;
     const chordM = rootChord / 1000;
-    const D = spanM * 2; // Diameter keseluruhan
+    const D = spanM * 2; 
     
     if (n === 0) {
         document.getElementById('outThrust').innerText = "0.00 N";
@@ -124,18 +121,15 @@ function updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twistDe
         return;
     }
     
-    const rho = 1.225; // Ketumpatan udara (kg/m^3)
+    const rho = 1.225; 
     const pitchRad = twistDeg * (Math.PI / 180);
-    const tipSpeed = n * Math.PI * D;
-    const idealPitchVelocity = n * pitchRad * (D / 2) * 5; // Parameter empirikal makmal
+    const idealPitchVelocity = n * pitchRad * (D / 2) * 5; 
     
     let thrust = 0, torque = 0, power = 0, eff = 0;
     
-    // Keadaan Udara Bergerak (Stall Dynamics)
     if (vel > idealPitchVelocity) {
-        thrust = -0.5 * rho * vel * vel * (D * D) * 0.05; // Seretan pemegun (Windmilling)
+        thrust = -0.5 * rho * vel * vel * (D * D) * 0.05; 
     } else {
-        // Pekali proksi Tujahan (CT) dan Daya Kilas (CQ)
         let CT = 0.08 * blades * (chordM / D) * (twistDeg / 10) * (1 - (vel / idealPitchVelocity));
         if (CT < 0) CT = 0;
         
@@ -143,10 +137,10 @@ function updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twistDe
         
         thrust = CT * rho * Math.pow(n, 2) * Math.pow(D, 4);
         torque = CQ * rho * Math.pow(n, 2) * Math.pow(D, 5);
-        power = torque * 2 * Math.PI * n; // P = τ * ω
+        power = torque * 2 * Math.PI * n; 
         
         if (vel === 0) {
-            eff = 0; // Kecekapan propulsi statik (hover) adalah sifar berdasarkan formula
+            eff = 0; 
         } else {
             eff = (thrust * vel) / power; 
         }
@@ -158,13 +152,12 @@ function updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twistDe
     document.getElementById('outEff').innerText = eff > 0 ? (eff * 100).toFixed(1) + " %" : "0.0 %";
 }
 
-// --- 5. Logik Pemodelan Kipas 3D ---
+// --- 5. Logik Pemodelan Kipas 3D (PRO UPGRADE) ---
 function updatePropellerGeometry() {
     if (propellerGroup) scene.remove(propellerGroup);
     
     propellerGroup = new THREE.Group();
     
-    // Ambil data dari UI
     const blades = parseInt(document.getElementById('inpBlades').value);
     const hubRadius = parseFloat(document.getElementById('inpHub').value);
     const span = parseFloat(document.getElementById('inpSpan').value);
@@ -175,7 +168,6 @@ function updatePropellerGeometry() {
     const rpm = parseFloat(document.getElementById('inpRPM').value) || 0;
     const vel = parseFloat(document.getElementById('inpVel').value) || 0;
     
-    // Penjanaan Bentuk 2D
     let shapeToExtrude;
     if (customAirfoilPoints && customAirfoilPoints.length > 0) {
         shapeToExtrude = generateCustomShape(rootChord, customAirfoilPoints);
@@ -184,30 +176,43 @@ function updatePropellerGeometry() {
         shapeToExtrude = generateNACAShape(rootChord, nacaCode);
     }
     
-    const extrudeSettings = { depth: span, bevelEnabled: false, steps: 60 };
+    // Tingkatkan steps untuk kelicinan lengkungan (smooth curve)
+    const extrudeSettings = { depth: span, bevelEnabled: false, steps: 100 };
     const geometry = new THREE.ExtrudeGeometry(shapeToExtrude, extrudeSettings);
     
     const positionAttribute = geometry.attributes.position;
     const vertex = new THREE.Vector3();
-    const pitchAxisX = rootChord * 0.25; // Sempadankan pada 25% Aerodynamic Center
+    const pitchAxisX = rootChord * 0.25; 
     
     for (let i = 0; i < positionAttribute.count; i++) {
         vertex.fromBufferAttribute(positionAttribute, i);
         
-        const zFactor = vertex.z / span; // Nilai 0 di pangkal, 1 di hujung
+        const zFactor = vertex.z / span; 
         
-        // 1. Pusatkan koordinat profil pada X=0 supaya lekap sempurna di hab
         let x = vertex.x - pitchAxisX;
         let y = vertex.y;
         
-        // 2. Nisbah Tirus (Taper)
-        const taperAmount = 1.0 - (zFactor * (1.0 - taperTarget));
-        x *= taperAmount;
-        y *= taperAmount;
+        // 2. Profil Perentas Industri (Non-linear Taper / Swelling at root)
+        let chordMultiplier;
+        if (zFactor < 0.2) {
+            // Mengembang dari 40% saiz di hub ke 100% pada 20% panjang bilah
+            chordMultiplier = 0.4 + (0.6 * (zFactor / 0.2)); 
+        } else {
+            // Menirus perlahan-lahan ke hujung
+            chordMultiplier = 1.0 - ((1.0 - taperTarget) * ((zFactor - 0.2) / 0.8));
+        }
+        x *= chordMultiplier;
+        
+        // Penebalan struktur akar (simulasi leher silinder)
+        let thicknessMultiplier = 1.0;
+        if (zFactor < 0.15) {
+            thicknessMultiplier = 1.0 + (1.8 * (1.0 - zFactor/0.15)); // Lebarkan paksi Y di pangkal
+        }
+        y *= (chordMultiplier * thicknessMultiplier);
         
         // 3. Kisaran Aerodinamik Realistik (Washout)
-        // Pangkal bilah mempunyai sudut penuh, hujung bilah lebih landai (dikurangkan 60%)
-        const currentPitch = twist - (zFactor * twist * 0.6); 
+        // Pangkal bilah mempunyai pitch curam, hujung bilah dikurangkan pitch sebanyak 70%
+        const currentPitch = twist - (zFactor * twist * 0.7); 
         const newX = x * Math.cos(-currentPitch) - y * Math.sin(-currentPitch);
         const newY = x * Math.sin(-currentPitch) + y * Math.cos(-currentPitch);
         
@@ -222,27 +227,35 @@ function updatePropellerGeometry() {
     geometry.computeVertexNormals();
     
     // 5. Orientasi Semula untuk Kipas
-    geometry.rotateX(-Math.PI / 2); // Tegakkan bilah ke atas (Paksi Y)
-    geometry.translate(0, hubRadius, 0); // Anjak keluar dari titik 0 sejauh jejari hab
+    geometry.rotateX(-Math.PI / 2); 
+    geometry.translate(0, hubRadius * 0.9, 0); // Masukkan sikit ke dalam daging hab
     
     // 6. Bina Tatasusunan Jejari (Radial Array)
     const angleStep = (Math.PI * 2) / blades;
     for(let i = 0; i < blades; i++) {
         const bladeMesh = new THREE.Mesh(geometry, material);
-        // Putarkan setiap bilah mengelilingi paksi Z secara berjarak
         bladeMesh.rotation.z = angleStep * i; 
         propellerGroup.add(bladeMesh);
     }
     
-    // 7. Bina Silinder Hab
-    const hubGeometry = new THREE.CylinderGeometry(hubRadius, hubRadius, rootChord * 1.5, 32);
-    const hubMesh = new THREE.Mesh(hubGeometry, material);
-    hubMesh.rotation.x = Math.PI / 2; // Halakan muka hab ke arah Paksi Z (Tujahan)
-    propellerGroup.add(hubMesh);
+    // 7. HAB AERODINAMIK INDUSTRI (Spinner + Nacelle)
+    // A. Kon Hidung (Spinner) menggunakan separuh sfera yang dipanjangkan
+    const spinnerGeo = new THREE.SphereGeometry(hubRadius * 1.25, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2);
+    const spinnerMesh = new THREE.Mesh(spinnerGeo, material);
+    spinnerMesh.rotation.x = Math.PI / 2; // Halakan ke depan
+    spinnerMesh.scale.set(1, 1, 1.8); // Lonjongkan ke depan membentuk kon
+    propellerGroup.add(spinnerMesh);
+    
+    // B. Badan Belakang Hab (Nacelle / Cylinder)
+    const cylinderGeo = new THREE.CylinderGeometry(hubRadius * 1.25, hubRadius * 1.25, rootChord * 1.2, 32);
+    const cylinderMesh = new THREE.Mesh(cylinderGeo, material);
+    cylinderMesh.rotation.x = Math.PI / 2;
+    cylinderMesh.position.z = -rootChord * 0.6; // Tarik ke belakang bilah
+    propellerGroup.add(cylinderMesh);
     
     // 8. Tetapan Kedudukan Kumpulan
-    propellerGroup.rotation.set(0, 0, 0); // Pastikan tiada putaran sisi yang tersisa
-    propellerGroup.position.set(0, span, 0); // Angkat keseluruhan model supaya terapung di atas grid
+    propellerGroup.rotation.set(0, 0, 0); 
+    propellerGroup.position.set(0, span, 0); 
     
     scene.add(propellerGroup);
     
@@ -290,7 +303,7 @@ document.getElementById('btnExportSTL').addEventListener('click', () => {
     const link = document.createElement('a');
     link.style.display = 'none';
     link.href = url;
-    link.download = 'Kipas_Aero_Makmal.stl';
+    link.download = 'Kipas_Industri_Pro.stl';
     document.body.appendChild(link);
     link.click();
     
@@ -300,8 +313,8 @@ document.getElementById('btnExportSTL').addEventListener('click', () => {
 
 document.getElementById('btnReset').addEventListener('click', () => {
     const defaults = {
-        'Blades': 2, 'Hub': 15, 'Span': 150, 'Root': 40, 
-        'Taper': 0.5, 'Twist': 15, 'Sweep': 0, 'RPM': 3000, 'Vel': 0
+        'Blades': 3, 'Hub': 20, 'Span': 200, 'Root': 40, 
+        'Taper': 0.3, 'Twist': 20, 'Sweep': 0, 'RPM': 1500, 'Vel': 5
     };
     for(let id in defaults) {
         document.getElementById(`inp${id}`).value = defaults[id];
