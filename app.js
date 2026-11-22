@@ -108,7 +108,7 @@ function generateNACAShape(chord, nacaCode, numPoints = 80) {
 }
 
 // --- 4. Kalkulator Analisis (BEMT Proxy) ---
-function updatePerformanceAnalysis(blades, span, rootChord, taper, twistDeg, rpm, vel) {
+function updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twistDeg, rpm, vel) {
     const n = rpm / 60; // Pusingan sesaat (RPS)
     
     // Kiraan Luas Rentas (Estimate)
@@ -164,6 +164,7 @@ function updatePropellerGeometry() {
     
     propellerGroup = new THREE.Group();
     
+    // Ambil data dari UI
     const blades = parseInt(document.getElementById('inpBlades').value);
     const hubRadius = parseFloat(document.getElementById('inpHub').value);
     const span = parseFloat(document.getElementById('inpSpan').value);
@@ -171,10 +172,10 @@ function updatePropellerGeometry() {
     const taperTarget = parseFloat(document.getElementById('inpTaper').value);
     const twist = parseFloat(document.getElementById('inpTwist').value) * (Math.PI / 180);
     const sweep = parseFloat(document.getElementById('inpSweep').value) * (Math.PI / 180);
-    const rpm = parseFloat(document.getElementById('inpRPM').value);
-    const vel = parseFloat(document.getElementById('inpVel').value);
+    const rpm = parseFloat(document.getElementById('inpRPM').value) || 0;
+    const vel = parseFloat(document.getElementById('inpVel').value) || 0;
     
-    // Pilih profil: Fail Luaran vs Standard NACA
+    // Penjanaan Bentuk 2D
     let shapeToExtrude;
     if (customAirfoilPoints && customAirfoilPoints.length > 0) {
         shapeToExtrude = generateCustomShape(rootChord, customAirfoilPoints);
@@ -188,71 +189,64 @@ function updatePropellerGeometry() {
     
     const positionAttribute = geometry.attributes.position;
     const vertex = new THREE.Vector3();
-    const pitchAxisX = rootChord * 0.25; // 25% Aerodynamic Center
+    const pitchAxisX = rootChord * 0.25; // Sempadankan pada 25% Aerodynamic Center
     
     for (let i = 0; i < positionAttribute.count; i++) {
         vertex.fromBufferAttribute(positionAttribute, i);
         
-        const zFactor = vertex.z / span; // 0 di pangkal, 1 di hujung
+        const zFactor = vertex.z / span; // Nilai 0 di pangkal, 1 di hujung
         
+        // 1. Pusatkan koordinat profil pada X=0 supaya lekap sempurna di hab
         let x = vertex.x - pitchAxisX;
         let y = vertex.y;
         
-        // A. Pengecilan Hujung (Taper)
+        // 2. Nisbah Tirus (Taper)
         const taperAmount = 1.0 - (zFactor * (1.0 - taperTarget));
         x *= taperAmount;
         y *= taperAmount;
         
-        // B. Piuhan Kisaran (Twist)
-        const currentTwist = zFactor * twist;
-        const newX = x * Math.cos(-currentTwist) - y * Math.sin(-currentTwist); // Negatif untuk realiti pitch
-        const newY = x * Math.sin(-currentTwist) + y * Math.cos(-currentTwist);
+        // 3. Kisaran Aerodinamik Realistik (Washout)
+        // Pangkal bilah mempunyai sudut penuh, hujung bilah lebih landai (dikurangkan 60%)
+        const currentPitch = twist - (zFactor * twist * 0.6); 
+        const newX = x * Math.cos(-currentPitch) - y * Math.sin(-currentPitch);
+        const newY = x * Math.sin(-currentPitch) + y * Math.cos(-currentPitch);
         
-        // C. Sudut Sapuan (Sweep)
+        // 4. Sudut Sapuan (Sweep)
         const sweepOffset = Math.tan(sweep) * vertex.z;
         
-        vertex.x = newX + (pitchAxisX * taperAmount) - sweepOffset;
+        vertex.x = newX - sweepOffset; 
         vertex.y = newY;
         positionAttribute.setXYZ(i, vertex.x, vertex.y, vertex.z);
     }
     
     geometry.computeVertexNormals();
     
-    // Anjak paksi untuk dicantumkan ke dinding luaran hab silinder
-    geometry.translate(-pitchAxisX, 0, hubRadius);
+    // 5. Orientasi Semula untuk Kipas
+    geometry.rotateX(-Math.PI / 2); // Tegakkan bilah ke atas (Paksi Y)
+    geometry.translate(0, hubRadius, 0); // Anjak keluar dari titik 0 sejauh jejari hab
     
-    // BINA TATASUSUNAN JEJARI (Radial Array Group)
-    geometry.computeVertexNormals();
-    
-    // 1. Putar paksi bilah dari mendatar (Z) kepada menegak (Y)
-    geometry.rotateX(-Math.PI / 2);
-    
-    // 2. Anjak paksi untuk dicantumkan ke dinding luaran hab silinder
-    geometry.translate(-pitchAxisX, hubRadius, 0);
-    
-    // BINA TATASUSUNAN JEJARI (Radial Array Group)
+    // 6. Bina Tatasusunan Jejari (Radial Array)
     const angleStep = (Math.PI * 2) / blades;
-    
-    for(let i=0; i < blades; i++) {
+    for(let i = 0; i < blades; i++) {
         const bladeMesh = new THREE.Mesh(geometry, material);
-        // Putarkan bilah mengelilingi paksi tujahan (Paksi Z)
-        bladeMesh.rotation.z = angleStep * i;
+        // Putarkan setiap bilah mengelilingi paksi Z secara berjarak
+        bladeMesh.rotation.z = angleStep * i; 
         propellerGroup.add(bladeMesh);
     }
     
-    // Bina Struktur Hab Tengah (Aci) yang seimbang
-    const hubGeometry = new THREE.CylinderGeometry(hubRadius, hubRadius, rootChord * 1.2, 32);
+    // 7. Bina Silinder Hab
+    const hubGeometry = new THREE.CylinderGeometry(hubRadius, hubRadius, rootChord * 1.5, 32);
     const hubMesh = new THREE.Mesh(hubGeometry, material);
-    // Putarkan silinder hab supaya menghala ke depan (Paksi Z)
-    hubMesh.rotation.x = Math.PI / 2;
+    hubMesh.rotation.x = Math.PI / 2; // Halakan muka hab ke arah Paksi Z (Tujahan)
     propellerGroup.add(hubMesh);
     
-    // Angkat model dari atas lantai grid supaya terapung di tengah
-    propellerGroup.position.y = span / 1.5; 
+    // 8. Tetapan Kedudukan Kumpulan
+    propellerGroup.rotation.set(0, 0, 0); // Pastikan tiada putaran sisi yang tersisa
+    propellerGroup.position.set(0, span, 0); // Angkat keseluruhan model supaya terapung di atas grid
     
     scene.add(propellerGroup);
     
-    // Kemas Kini Analisis Angka
+    // Jalankan pengiraan analisis
     updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twist * (180/Math.PI), rpm, vel);
 }
 
@@ -332,15 +326,13 @@ updatePropellerGeometry();
 function animate() {
     requestAnimationFrame(animate);
     
-    // Putarkan kipas secara maya berdasarkan gelangsar RPM
-    const rpm = parseFloat(document.getElementById('inpRPM').value);
+    const rpm = parseFloat(document.getElementById('inpRPM').value) || 0;
     if(propellerGroup && rpm > 0) {
-        // Skala visual agar putaran licin mengelilingi paksi tujahan (Z)
+        // Putarkan keseluruhan kumpulan kipas hanya pada paksi Z (Tujahan)
         propellerGroup.rotation.z -= (rpm / 1000) * 0.1;
     }
     
     controls.update();
     renderer.render(scene, camera);
-}
 }
 animate();
