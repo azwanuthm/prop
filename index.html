@@ -1,121 +1,125 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ms">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Konfigurator Kipas & Turbin 3D Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; }
-        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; }
-        .panel-scroll::-webkit-scrollbar { width: 6px; }
-        .panel-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Visualisasi Bilah Turbin Angin 3D</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;font-family:Inter,system-ui,sans-serif;background:#eef2f7;color:#1f2937}
+    #canvas-container{position:absolute;inset:0}
+    .panel{position:absolute;z-index:10;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);box-shadow:0 12px 32px rgba(15,23,42,.16);border:1px solid rgba(148,163,184,.25)}
+    .scrollbar::-webkit-scrollbar{width:6px}.scrollbar::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:9px}
+    input[type=range]{accent-color:#2563eb}.metric{display:flex;justify-content:space-between;gap:12px;padding:5px 0}.metric strong{color:#34d399}
+    #airfoilCanvas{width:100%;height:150px;border-radius:10px;background:#f8fafc;border:1px solid #dbe3ee}
+    .view-btn.active{background:#2563eb;color:white;border-color:#2563eb}
+    .badge{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:10px;font-weight:700}
+    @media(max-width:900px){#leftPanel{width:292px}.right-panel{display:none}}
+  </style>
 </head>
-<body class="bg-gray-100 text-gray-800">
+<body>
+  <div id="canvas-container" aria-label="Paparan rotor turbin angin tiga dimensi"></div>
 
-    <!-- Panel Input (Kiri) -->
-    <div class="absolute top-4 left-4 bg-white p-5 rounded-lg shadow-lg w-80 z-10 max-h-[95vh] overflow-y-auto panel-scroll">
-        <h1 class="text-xl font-bold mb-4 text-blue-600 border-b pb-2">Parameter Turbin</h1>
-        
-        <!-- Hab & Bilangan Bilah -->
-        <div class="mb-4">
-            <h2 class="text-sm font-semibold text-gray-700 mb-2">Konfigurasi Hab</h2>
-            <label class="block text-xs mb-1">Bilangan Bilah: <span id="valBlades" class="font-bold">3</span></label>
-            <input type="range" id="inpBlades" min="2" max="8" step="1" value="3" class="w-full mb-2">
-            
-            <label class="block text-xs mb-1">Jejari Hab (mm): <span id="valHub">20</span></label>
-            <input type="range" id="inpHub" min="10" max="60" step="1" value="20" class="w-full">
-        </div>
-
-        <!-- Geometri Bilah -->
-        <div class="mb-4 border-t pt-4">
-            <h2 class="text-sm font-semibold text-gray-700 mb-2">Geometri Bilah</h2>
-            <label class="block text-xs mb-1">Panjang Bilah (Span): <span id="valSpan">200</span></label>
-            <input type="range" id="inpSpan" min="50" max="400" value="200" class="w-full mb-2">
-            
-            <label class="block text-xs mb-1">Perentas Maksimum (Chord): <span id="valRoot">40</span></label>
-            <input type="range" id="inpRoot" min="20" max="100" value="40" class="w-full mb-2">
-            
-            <label class="block text-xs mb-1">Nisbah Tirus Hujung (Taper): <span id="valTaper">0.3</span></label>
-            <input type="range" id="inpTaper" min="0.1" max="1.0" step="0.05" value="0.3" class="w-full">
-        </div>
-
-        <!-- Aerodinamik -->
-        <div class="mb-4 border-t pt-4">
-            <h2 class="text-sm font-semibold text-gray-700 mb-2">Aerodinamik (Darjah)</h2>
-            <label class="block text-xs mb-1">Sudut Kisaran (Pitch/Twist): <span id="valTwist">20</span></label>
-            <input type="range" id="inpTwist" min="5" max="45" value="20" class="w-full mb-2">
-            
-            <label class="block text-xs mb-1">Sudut Sapuan (Sweep): <span id="valSweep">0</span></label>
-            <input type="range" id="inpSweep" min="-20" max="45" value="0" class="w-full">
-        </div>
-
-        <!-- Keadaan Operasi -->
-        <div class="mb-4 border-t pt-4 bg-blue-50 p-2 rounded">
-            <h2 class="text-sm font-semibold text-blue-800 mb-2">Keadaan Operasi Maya</h2>
-            <label class="block text-xs mb-1">Kelajuan Putaran (RPM): <span id="valRPM" class="font-bold">1500</span></label>
-            <input type="range" id="inpRPM" min="0" max="10000" step="100" value="1500" class="w-full mb-2">
-            
-            <label class="block text-xs mb-1">Halaju Hadapan (m/s): <span id="valVel" class="font-bold">5</span></label>
-            <input type="range" id="inpVel" min="0" max="50" step="0.5" value="5" class="w-full">
-            <p class="text-[9px] text-gray-500 mt-1">* 0 m/s = Ujian Hover/Statik</p>
-        </div>
-
-        <!-- Profil & Data -->
-        <div class="mb-4 border-t pt-4">
-            <h2 class="text-sm font-semibold text-gray-700 mb-2">Profil Aerodinamik</h2>
-            <select id="inpNACA" class="w-full p-2 border border-gray-300 rounded text-sm bg-gray-50 focus:ring-blue-500 focus:border-blue-500 mb-2">
-                <option value="0012">NACA 0012 (Simetri)</option>
-                <option value="2412">NACA 2412 (Kegunaan Am)</option>
-                <option value="4412" selected>NACA 4412 (Daya Angkat Tinggi)</option>
-                <option value="6412">NACA 6412 (Agresif)</option>
-            </select>
-            <input type="file" id="inpFile" accept=".dat,.txt" class="w-full text-xs text-gray-500 file:mr-3 file:py-1 file:px-2 file:rounded file:border-0 file:bg-gray-200 file:text-gray-700 hover:file:bg-gray-300 cursor-pointer"/>
-        </div>
-
-        <!-- Tindakan -->
-        <div class="flex flex-col gap-2 border-t pt-4">
-            <button id="btnExportSTL" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded text-sm transition shadow-sm">
-                Muat Turun Fail STL
-            </button>
-            <button id="btnReset" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded text-sm transition shadow-sm">
-                Tetapkan Semula
-            </button>
-        </div>
+  <aside id="leftPanel" class="panel scrollbar left-3 top-3 bottom-3 w-80 rounded-2xl p-5 overflow-y-auto">
+    <div class="mb-4 border-b pb-3">
+      <span class="badge bg-blue-100 text-blue-700">ALAT PEMBELAJARAN</span>
+      <h1 class="mt-2 text-xl font-extrabold text-slate-900">Bilah Turbin Angin 3D</h1>
+      <p class="text-xs text-slate-500">Visualisasikan kesan profil airfoil, chord dan twist pada rotor.</p>
     </div>
 
-    <!-- Panel Analisis (Kanan Atas) -->
-    <div class="absolute top-4 right-4 bg-gray-900 text-green-400 p-5 rounded-lg shadow-xl w-64 z-10 font-mono text-sm border border-gray-700">
-        <h2 class="text-white font-bold mb-3 border-b border-gray-700 pb-1">Analisis Prestasi</h2>
-        <div class="flex justify-between mb-2">
-            <span class="text-gray-400">Tujahan:</span>
-            <span id="outThrust">0.00 N</span>
-        </div>
-        <div class="flex justify-between mb-2">
-            <span class="text-gray-400">Daya Kilas:</span>
-            <span id="outTorque">0.00 Nm</span>
-        </div>
-        <div class="flex justify-between mb-2">
-            <span class="text-gray-400">Kuasa (Req):</span>
-            <span id="outPower">0.00 W</span>
-        </div>
-        <div class="flex justify-between font-bold text-yellow-400 border-t border-gray-700 pt-2 mt-2">
-            <span>Kecekapan (η):</span>
-            <span id="outEff">0.0 %</span>
-        </div>
+    <section class="mb-4">
+      <h2 class="mb-2 text-sm font-bold text-slate-800">Paparan</h2>
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" id="btnRotor" class="view-btn active rounded-lg border px-3 py-2 text-xs font-semibold">Rotor lengkap</button>
+        <button type="button" id="btnBlade" class="view-btn rounded-lg border px-3 py-2 text-xs font-semibold">Satu bilah</button>
+      </div>
+      <div class="mt-2 grid grid-cols-3 gap-2">
+        <button type="button" data-camera="front" class="camera-btn rounded-lg border p-2 text-xs">Hadapan</button>
+        <button type="button" data-camera="side" class="camera-btn rounded-lg border p-2 text-xs">Sisi</button>
+        <button type="button" data-camera="iso" class="camera-btn rounded-lg border p-2 text-xs">Isometrik</button>
+      </div>
+    </section>
+
+    <section class="mb-4 border-t pt-4">
+      <h2 class="mb-2 text-sm font-bold text-slate-800">Konfigurasi rotor</h2>
+      <label class="mb-1 block text-xs">Bilangan bilah: <b id="valBlades">3</b></label>
+      <input id="inpBlades" type="range" min="2" max="6" step="1" value="3" class="mb-3 w-full">
+      <label class="mb-1 block text-xs">Jejari hab: <b id="valHub">20</b> mm</label>
+      <input id="inpHub" type="range" min="10" max="60" step="1" value="20" class="w-full">
+    </section>
+
+    <section class="mb-4 border-t pt-4">
+      <h2 class="mb-2 text-sm font-bold text-slate-800">Geometri bilah</h2>
+      <label class="mb-1 block text-xs">Panjang bilah: <b id="valSpan">200</b> mm</label>
+      <input id="inpSpan" type="range" min="80" max="400" step="5" value="200" class="mb-3 w-full">
+      <label class="mb-1 block text-xs">Chord maksimum: <b id="valRoot">45</b> mm</label>
+      <input id="inpRoot" type="range" min="20" max="100" step="1" value="45" class="mb-3 w-full">
+      <label class="mb-1 block text-xs">Nisbah chord hujung: <b id="valTaper">0.30</b></label>
+      <input id="inpTaper" type="range" min="0.10" max="0.80" step="0.05" value="0.30" class="mb-3 w-full">
+      <label class="mb-1 block text-xs">Root twist: <b id="valRootTwist">20</b>°</label>
+      <input id="inpRootTwist" type="range" min="-5" max="40" step="1" value="20" class="mb-3 w-full">
+      <label class="mb-1 block text-xs">Tip twist: <b id="valTipTwist">4</b>°</label>
+      <input id="inpTipTwist" type="range" min="-10" max="25" step="1" value="4" class="mb-3 w-full">
+      <label class="mb-1 block text-xs">Collective pitch: <b id="valPitch">0</b>°</label>
+      <input id="inpPitch" type="range" min="-10" max="20" step="1" value="0" class="mb-3 w-full">
+      <label class="mb-1 block text-xs">Sweep: <b id="valSweep">0</b>°</label>
+      <input id="inpSweep" type="range" min="-15" max="25" step="1" value="0" class="w-full">
+    </section>
+
+    <section class="mb-4 border-t pt-4">
+      <h2 class="mb-2 text-sm font-bold text-slate-800">Profil airfoil</h2>
+      <select id="inpNACA" class="mb-2 w-full rounded-lg border border-slate-300 bg-white p-2 text-sm">
+        <option value="0012">NACA 0012, simetri</option>
+        <option value="2412">NACA 2412, camber sederhana</option>
+        <option value="4412" selected>NACA 4412, camber tinggi</option>
+        <option value="6412">NACA 6412, camber agresif</option>
+      </select>
+      <input id="inpFile" type="file" accept=".dat,.txt" class="w-full text-xs file:mr-2 file:rounded-md file:border-0 file:bg-slate-200 file:px-3 file:py-2 file:font-semibold">
+      <p id="fileStatus" class="mt-1 text-[10px] text-slate-500">Format Selig .dat: koordinat x/c dan y/c.</p>
+    </section>
+
+    <section class="mb-4 rounded-xl bg-blue-50 p-3">
+      <h2 class="mb-2 text-sm font-bold text-blue-800">Keadaan operasi</h2>
+      <label class="mb-1 block text-xs">Kelajuan putaran: <b id="valRPM">300</b> rpm</label>
+      <input id="inpRPM" type="range" min="0" max="1500" step="25" value="300" class="mb-3 w-full">
+      <label class="mb-1 block text-xs">Kelajuan angin bebas: <b id="valWind">5.0</b> m/s</label>
+      <input id="inpWind" type="range" min="0.5" max="20" step="0.5" value="5" class="w-full">
+    </section>
+
+    <section class="mb-4 border-t pt-4">
+      <label class="mb-2 flex items-center gap-2 text-xs"><input id="chkSections" type="checkbox" checked> Paparkan section root, tengah dan tip</label>
+      <label class="mb-2 flex items-center gap-2 text-xs"><input id="chkAxis" type="checkbox" checked> Paparkan paksi dan arah angin</label>
+      <label class="flex items-center gap-2 text-xs"><input id="chkPhysical" type="checkbox"> Animasi kelajuan fizikal</label>
+    </section>
+
+    <div class="grid grid-cols-2 gap-2 border-t pt-4">
+      <button type="button" id="btnExportBlade" class="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700">Eksport bilah STL</button>
+      <button type="button" id="btnExportRotor" class="rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-900">Eksport rotor STL</button>
+      <button type="button" id="btnReset" class="col-span-2 rounded-lg bg-slate-200 px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-300">Tetapkan semula</button>
     </div>
+  </aside>
 
-    <div id="canvas-container"></div>
+  <aside class="panel right-panel right-3 top-3 w-72 rounded-2xl p-4">
+    <h2 class="border-b pb-2 text-sm font-bold text-slate-900">Profil airfoil dipilih</h2>
+    <canvas id="airfoilCanvas" width="520" height="260" class="mt-3"></canvas>
+    <div id="airfoilInfo" class="mt-2 text-xs text-slate-600"></div>
+  </aside>
 
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-        }
-    }
-    </script>
-    <script type="module" src="./app.js"></script>
+  <aside class="panel right-panel bottom-3 right-3 w-72 rounded-2xl bg-slate-950 p-4 font-mono text-xs text-slate-300">
+    <div class="mb-2 flex items-center justify-between border-b border-slate-700 pb-2">
+      <h2 class="font-bold text-white">Geometri &amp; Kinematik</h2>
+      <span class="badge bg-emerald-900 text-emerald-300">DIKIRA</span>
+    </div>
+    <div class="metric"><span>Diameter rotor</span><strong id="outDiameter">0.440 m</strong></div>
+    <div class="metric"><span>Luas sapuan</span><strong id="outArea">0.152 m²</strong></div>
+    <div class="metric"><span>Kelajuan sudut</span><strong id="outOmega">31.42 rad/s</strong></div>
+    <div class="metric"><span>Kelajuan tip</span><strong id="outTipSpeed">6.91 m/s</strong></div>
+    <div class="metric"><span>TSR, λ</span><strong id="outTSR">1.38</strong></div>
+    <div class="metric"><span>Solidity anggaran</span><strong id="outSolidity">18.5%</strong></div>
+    <p class="mt-3 border-t border-slate-700 pt-2 text-[10px] leading-relaxed text-slate-400">Nilai ini ialah geometri dan kinematik sahaja. Kuasa, tork dan tujahan memerlukan polar airfoil serta model BEMT tervalidasi.</p>
+  </aside>
+
+  <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

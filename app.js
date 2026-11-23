@@ -2,350 +2,270 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 
-// --- 1. Persediaan Pemandangan ---
-const container = document.getElementById('canvas-container');
+const $ = id => document.getElementById(id);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xf0f2f5);
-
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(300, 200, 400);
-
+scene.background = new THREE.Color(0xeef2f7);
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 3000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-container.appendChild(renderer.domElement);
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+$('canvas-container').appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.dampingFactor = 0.05;
+controls.dampingFactor = 0.06;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x64748b, 1.7));
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+keyLight.position.set(250, 350, 450);
+keyLight.castShadow = true;
+scene.add(keyLight);
+scene.add(new THREE.GridHelper(700, 35, 0x94a3b8, 0xcbd5e1));
 
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-scene.add(ambientLight);
+const bladeMaterial = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.3, metalness: 0.12, side: THREE.DoubleSide });
+const hubMaterial = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.24, metalness: 0.25 });
+const sectionMaterial = new THREE.LineBasicMaterial({ color: 0xf59e0b });
+let rotorGroup = new THREE.Group();
+let axisGroup = new THREE.Group();
+let bladeGeometry = null;
+let customAirfoil = null;
+let currentView = 'rotor';
+scene.add(rotorGroup, axisGroup);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-dirLight.position.set(100, 200, 100);
-scene.add(dirLight);
+const inputMap = {
+  Blades:'inpBlades', Hub:'inpHub', Span:'inpSpan', Root:'inpRoot', Taper:'inpTaper',
+  RootTwist:'inpRootTwist', TipTwist:'inpTipTwist', Pitch:'inpPitch', Sweep:'inpSweep', RPM:'inpRPM', Wind:'inpWind'
+};
 
-const gridHelper = new THREE.GridHelper(600, 60, 0x888888, 0xdddddd);
-scene.add(gridHelper);
-
-let customAirfoilPoints = null;
-let propellerGroup = null;
-
-const material = new THREE.MeshStandardMaterial({
-    color: 0x2563eb, // Biru pekat industri
-    roughness: 0.3,
-    metalness: 0.2,
-    side: THREE.DoubleSide
-});
-
-// --- 2. Pembaca Data Selig (.dat) ---
-function parseDatFile(content) {
-    const lines = content.split('\n');
-    const points = [];
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line || line.match(/^[a-zA-Z]/)) continue;
-        const parts = line.split(/\s+/);
-        if (parts.length >= 2) {
-            const x = parseFloat(parts[0]);
-            const y = parseFloat(parts[1]);
-            if (!isNaN(x) && !isNaN(y)) points.push(new THREE.Vector2(x, y));
-        }
-    }
-    return points;
+function values() {
+  const v = {};
+  for (const [key,id] of Object.entries(inputMap)) v[key] = Number($(id).value);
+  return v;
 }
 
-function generateCustomShape(chord, pointsArray) {
-    const shape = new THREE.Shape();
-    if (pointsArray.length === 0) return shape;
-    shape.moveTo(pointsArray[0].x * chord, pointsArray[0].y * chord);
-    for (let i = 1; i < pointsArray.length; i++) {
-        shape.lineTo(pointsArray[i].x * chord, pointsArray[i].y * chord);
+function nacaPoints(code, count=100) {
+  const m = Number(code[0]) / 100;
+  const p = Number(code[1]) / 10;
+  const t = Number(code.slice(2)) / 100;
+  const upper=[], lower=[];
+  for (let i=0;i<=count;i++) {
+    const beta = i * Math.PI / count;
+    const x = (1-Math.cos(beta))/2;
+    const yt = 5*t*(0.2969*Math.sqrt(x)-0.1260*x-0.3516*x*x+0.2843*x*x*x-0.1015*x*x*x*x);
+    let yc=0, slope=0;
+    if (m>0 && p>0) {
+      if (x<p) { yc = m/(p*p)*(2*p*x-x*x); slope=2*m/(p*p)*(p-x); }
+      else { yc=m/((1-p)*(1-p))*((1-2*p)+2*p*x-x*x); slope=2*m/((1-p)*(1-p))*(p-x); }
     }
-    shape.lineTo(pointsArray[0].x * chord, pointsArray[0].y * chord);
-    return shape;
+    const th=Math.atan(slope);
+    upper.push(new THREE.Vector2(x-yt*Math.sin(th), yc+yt*Math.cos(th)));
+    lower.push(new THREE.Vector2(x+yt*Math.sin(th), yc-yt*Math.cos(th)));
+  }
+  return [...upper.slice().reverse(), ...lower.slice(1)];
 }
 
-// --- 3. Enjin NACA 4-Digit ---
-function generateNACAShape(chord, nacaCode, numPoints = 80) {
-    const shape = new THREE.Shape();
-    const m = parseInt(nacaCode.charAt(0)) / 100;
-    const p = parseInt(nacaCode.charAt(1)) / 10;
-    const t = parseInt(nacaCode.substring(2, 4)) / 100;
-    
-    const upperPoints = [];
-    const lowerPoints = [];
-    
-    for (let i = 0; i <= numPoints; i++) {
-        const beta = (i / numPoints) * Math.PI;
-        const x = (1 - Math.cos(beta)) / 2;
-        const yt = 5 * t * (0.2969 * Math.sqrt(x) - 0.1260 * x - 0.3516 * Math.pow(x, 2) + 0.2843 * Math.pow(x, 3) - 0.1015 * Math.pow(x, 4));
-        
-        let yc = 0, dyc_dx = 0;
-        if (p > 0) {
-            if (x < p) {
-                yc = (m / Math.pow(p, 2)) * (2 * p * x - Math.pow(x, 2));
-                dyc_dx = (2 * m / Math.pow(p, 2)) * (p - x);
-            } else {
-                yc = (m / Math.pow(1 - p, 2)) * ((1 - 2 * p) + 2 * p * x - Math.pow(x, 2));
-                dyc_dx = (2 * m / Math.pow(1 - p, 2)) * (p - x);
-            }
-        }
-        
-        const theta = Math.atan(dyc_dx);
-        upperPoints.push(new THREE.Vector2((x - yt * Math.sin(theta)) * chord, (yc + yt * Math.cos(theta)) * chord));
-        lowerPoints.push(new THREE.Vector2((x + yt * Math.sin(theta)) * chord, (yc - yt * Math.cos(theta)) * chord));
-    }
-    
-    const points = [];
-    for (let i = numPoints; i >= 0; i--) points.push(upperPoints[i]);
-    for (let i = 1; i <= numPoints; i++) points.push(lowerPoints[i]);
-    
-    shape.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) shape.lineTo(points[i].x, points[i].y);
-    return shape;
+function getAirfoilPoints() {
+  return customAirfoil || nacaPoints($('inpNACA').value);
 }
 
-function updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twistDeg, rpm, vel) {
-    const n = rpm / 60; 
-    const spanM = span / 1000;
-    const chordM = rootChord / 1000;
-    const D = spanM * 2; 
-    
-    if (n === 0) {
-        document.getElementById('outThrust').innerText = "0.00 N";
-        document.getElementById('outTorque').innerText = "0.00 Nm";
-        document.getElementById('outPower').innerText = "0.00 W";
-        document.getElementById('outEff').innerText = "0.0 %";
-        return;
-    }
-    
-    const rho = 1.225; 
-    const pitchRad = twistDeg * (Math.PI / 180);
-    const idealPitchVelocity = n * pitchRad * (D / 2) * 5; 
-    
-    let thrust = 0, torque = 0, power = 0, eff = 0;
-    
-    if (vel > idealPitchVelocity) {
-        thrust = -0.5 * rho * vel * vel * (D * D) * 0.05; 
-    } else {
-        let CT = 0.08 * blades * (chordM / D) * (twistDeg / 10) * (1 - (vel / idealPitchVelocity));
-        if (CT < 0) CT = 0;
-        
-        let CQ = (CT * 0.15) + (0.005 * blades * (chordM / D)); 
-        
-        thrust = CT * rho * Math.pow(n, 2) * Math.pow(D, 4);
-        torque = CQ * rho * Math.pow(n, 2) * Math.pow(D, 5);
-        power = torque * 2 * Math.PI * n; 
-        
-        if (vel === 0) {
-            eff = 0; 
-        } else {
-            eff = (thrust * vel) / power; 
-        }
-    }
-    
-    document.getElementById('outThrust').innerText = thrust > 0 ? thrust.toFixed(2) + " N" : "Pegun/Brek";
-    document.getElementById('outTorque').innerText = torque.toFixed(2) + " Nm";
-    document.getElementById('outPower').innerText = power > 1000 ? (power/1000).toFixed(2) + " kW" : power.toFixed(2) + " W";
-    document.getElementById('outEff').innerText = eff > 0 ? (eff * 100).toFixed(1) + " %" : "0.0 %";
+function localGeometry(s, v) {
+  const r=s;
+  let chordFactor;
+  if (s<0.18) chordFactor=0.55+0.45*(s/0.18);
+  else chordFactor=1-(1-v.Taper)*((s-0.18)/0.82);
+  return {
+    chord:v.Root*chordFactor,
+    twist:THREE.MathUtils.lerp(v.RootTwist,v.TipTwist,s)+v.Pitch,
+    sweep:Math.tan(THREE.MathUtils.degToRad(v.Sweep))*v.Span*s
+  };
 }
 
-// --- 5. Logik Pemodelan Kipas 3D (PRO UPGRADE) ---
-function updatePropellerGeometry() {
-    if (propellerGroup) scene.remove(propellerGroup);
-    
-    propellerGroup = new THREE.Group();
-    
-    const blades = parseInt(document.getElementById('inpBlades').value);
-    const hubRadius = parseFloat(document.getElementById('inpHub').value);
-    const span = parseFloat(document.getElementById('inpSpan').value);
-    const rootChord = parseFloat(document.getElementById('inpRoot').value);
-    const taperTarget = parseFloat(document.getElementById('inpTaper').value);
-    const twist = parseFloat(document.getElementById('inpTwist').value) * (Math.PI / 180);
-    const sweep = parseFloat(document.getElementById('inpSweep').value) * (Math.PI / 180);
-    const rpm = parseFloat(document.getElementById('inpRPM').value) || 0;
-    const vel = parseFloat(document.getElementById('inpVel').value) || 0;
-    
-    let shapeToExtrude;
-    if (customAirfoilPoints && customAirfoilPoints.length > 0) {
-        shapeToExtrude = generateCustomShape(rootChord, customAirfoilPoints);
-    } else {
-        const nacaCode = document.getElementById('inpNACA').value;
-        shapeToExtrude = generateNACAShape(rootChord, nacaCode);
-    }
-    
-    // Tingkatkan steps untuk kelicinan lengkungan (smooth curve)
-    const extrudeSettings = { depth: span, bevelEnabled: false, steps: 100 };
-    const geometry = new THREE.ExtrudeGeometry(shapeToExtrude, extrudeSettings);
-    
-    const positionAttribute = geometry.attributes.position;
-    const vertex = new THREE.Vector3();
-    const pitchAxisX = rootChord * 0.25; 
-    
-    for (let i = 0; i < positionAttribute.count; i++) {
-        vertex.fromBufferAttribute(positionAttribute, i);
-        
-        const zFactor = vertex.z / span; 
-        
-        let x = vertex.x - pitchAxisX;
-        let y = vertex.y;
-        
-        // 2. Profil Perentas Industri (Non-linear Taper / Swelling at root)
-        let chordMultiplier;
-        if (zFactor < 0.2) {
-            // Mengembang dari 40% saiz di hub ke 100% pada 20% panjang bilah
-            chordMultiplier = 0.4 + (0.6 * (zFactor / 0.2)); 
-        } else {
-            // Menirus perlahan-lahan ke hujung
-            chordMultiplier = 1.0 - ((1.0 - taperTarget) * ((zFactor - 0.2) / 0.8));
-        }
-        x *= chordMultiplier;
-        
-        // Penebalan struktur akar (simulasi leher silinder)
-        let thicknessMultiplier = 1.0;
-        if (zFactor < 0.15) {
-            thicknessMultiplier = 1.0 + (1.8 * (1.0 - zFactor/0.15)); // Lebarkan paksi Y di pangkal
-        }
-        y *= (chordMultiplier * thicknessMultiplier);
-        
-        // 3. Kisaran Aerodinamik Realistik (Washout)
-        // Pangkal bilah mempunyai pitch curam, hujung bilah dikurangkan pitch sebanyak 70%
-        const currentPitch = twist - (zFactor * twist * 0.7); 
-        const newX = x * Math.cos(-currentPitch) - y * Math.sin(-currentPitch);
-        const newY = x * Math.sin(-currentPitch) + y * Math.cos(-currentPitch);
-        
-        // 4. Sudut Sapuan (Sweep)
-        const sweepOffset = Math.tan(sweep) * vertex.z;
-        
-        vertex.x = newX - sweepOffset; 
-        vertex.y = newY;
-        positionAttribute.setXYZ(i, vertex.x, vertex.y, vertex.z);
-    }
-    
-    geometry.computeVertexNormals();
-    
-    // 5. Orientasi Semula untuk Kipas
-    geometry.rotateX(-Math.PI / 2); 
-    geometry.translate(0, hubRadius * 0.9, 0); // Masukkan sikit ke dalam daging hab
-    
-    // 6. Bina Tatasusunan Jejari (Radial Array)
-    const angleStep = (Math.PI * 2) / blades;
-    for(let i = 0; i < blades; i++) {
-        const bladeMesh = new THREE.Mesh(geometry, material);
-        bladeMesh.rotation.z = angleStep * i; 
-        propellerGroup.add(bladeMesh);
-    }
-    
-    // 7. HAB AERODINAMIK INDUSTRI (Spinner + Nacelle)
-    // A. Kon Hidung (Spinner) menggunakan separuh sfera yang dipanjangkan
-    const spinnerGeo = new THREE.SphereGeometry(hubRadius * 1.25, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2);
-    const spinnerMesh = new THREE.Mesh(spinnerGeo, material);
-    spinnerMesh.rotation.x = Math.PI / 2; // Halakan ke depan
-    spinnerMesh.scale.set(1, 1, 1.8); // Lonjongkan ke depan membentuk kon
-    propellerGroup.add(spinnerMesh);
-    
-    // B. Badan Belakang Hab (Nacelle / Cylinder)
-    const cylinderGeo = new THREE.CylinderGeometry(hubRadius * 1.25, hubRadius * 1.25, rootChord * 1.2, 32);
-    const cylinderMesh = new THREE.Mesh(cylinderGeo, material);
-    cylinderMesh.rotation.x = Math.PI / 2;
-    cylinderMesh.position.z = -rootChord * 0.6; // Tarik ke belakang bilah
-    propellerGroup.add(cylinderMesh);
-    
-    // 8. Tetapan Kedudukan Kumpulan
-    propellerGroup.rotation.set(0, 0, 0); 
-    propellerGroup.position.set(0, span, 0); 
-    
-    scene.add(propellerGroup);
-    
-    // Jalankan pengiraan analisis
-    updatePerformanceAnalysis(blades, span, rootChord, taperTarget, twist * (180/Math.PI), rpm, vel);
+function transformPoint(p, station, v) {
+  const g=localGeometry(station,v);
+  const x=(p.x-0.25)*g.chord;
+  const y=p.y*g.chord;
+  const a=-THREE.MathUtils.degToRad(g.twist);
+  const xr=x*Math.cos(a)-y*Math.sin(a)-g.sweep;
+  const yr=x*Math.sin(a)+y*Math.cos(a);
+  return new THREE.Vector3(xr, v.Hub+station*v.Span, yr);
 }
 
-// --- 6. Logik Acara (Event Listeners) ---
-const inputs = ['Blades', 'Hub', 'Span', 'Root', 'Taper', 'Twist', 'Sweep', 'RPM', 'Vel'];
-
-inputs.forEach(id => {
-    const slider = document.getElementById(`inp${id}`);
-    const label = document.getElementById(`val${id}`);
-    slider.addEventListener('input', (e) => {
-        label.textContent = e.target.value;
-        updatePropellerGeometry();
-    });
-});
-
-document.getElementById('inpNACA').addEventListener('change', () => {
-    customAirfoilPoints = null;
-    document.getElementById('inpFile').value = '';
-    updatePropellerGeometry();
-});
-
-document.getElementById('inpFile').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(event) {
-        customAirfoilPoints = parseDatFile(event.target.result);
-        updatePropellerGeometry();
-    };
-    reader.readAsText(file);
-});
-
-// Logik Muat Turun STL SolidWorks
-document.getElementById('btnExportSTL').addEventListener('click', () => {
-    if (!propellerGroup) return;
-    const exporter = new STLExporter();
-    const stlString = exporter.parse(scene);
-    const blob = new Blob([stlString], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    
-    const link = document.createElement('a');
-    link.style.display = 'none';
-    link.href = url;
-    link.download = 'Kipas_Industri_Pro.stl';
-    document.body.appendChild(link);
-    link.click();
-    
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-});
-
-document.getElementById('btnReset').addEventListener('click', () => {
-    const defaults = {
-        'Blades': 3, 'Hub': 20, 'Span': 200, 'Root': 40, 
-        'Taper': 0.3, 'Twist': 20, 'Sweep': 0, 'RPM': 1500, 'Vel': 5
-    };
-    for(let id in defaults) {
-        document.getElementById(`inp${id}`).value = defaults[id];
-        document.getElementById(`val${id}`).textContent = defaults[id];
+function buildBladeGeometry(v) {
+  const profile=getAirfoilPoints();
+  const stations=20, n=profile.length;
+  const positions=[], indices=[];
+  for(let j=0;j<stations;j++) {
+    const s=j/(stations-1);
+    for(const p of profile) {
+      const q=transformPoint(p,s,v);
+      positions.push(q.x,q.y,q.z);
     }
-    document.getElementById('inpNACA').value = "4412";
-    customAirfoilPoints = null;
-    document.getElementById('inpFile').value = '';
-    updatePropellerGeometry();
-});
-
-// Penyesuaian Saiz Pelayar
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-// --- 7. Gelung Enjin Putaran & Animasi ---
-updatePropellerGeometry();
-
-function animate() {
-    requestAnimationFrame(animate);
-    
-    const rpm = parseFloat(document.getElementById('inpRPM').value) || 0;
-    if(propellerGroup && rpm > 0) {
-        // Putarkan keseluruhan kumpulan kipas hanya pada paksi Z (Tujahan)
-        propellerGroup.rotation.z -= (rpm / 1000) * 0.1;
+  }
+  for(let j=0;j<stations-1;j++) {
+    for(let i=0;i<n;i++) {
+      const ni=(i+1)%n, a=j*n+i, b=j*n+ni, c=(j+1)*n+ni, d=(j+1)*n+i;
+      indices.push(a,b,d,b,c,d);
     }
-    
-    controls.update();
-    renderer.render(scene, camera);
+  }
+  const rootCenter=positions.length/3;
+  positions.push(0,v.Hub,0);
+  const tipCenter=positions.length/3;
+  positions.push(-localGeometry(1,v).sweep,v.Hub+v.Span,0);
+  for(let i=0;i<n;i++) {
+    const ni=(i+1)%n;
+    indices.push(rootCenter,ni,i);
+    const a=(stations-1)*n+i,b=(stations-1)*n+ni;
+    indices.push(tipCenter,a,b);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
 }
-animate();
+
+function disposeGroup(group) {
+  group.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material && o.material!==bladeMaterial && o.material!==hubMaterial && o.material!==sectionMaterial) o.material.dispose(); });
+  group.clear();
+}
+
+function sectionLine(station,v,color) {
+  const pts=getAirfoilPoints().map(p=>transformPoint(p,station,v));
+  pts.push(pts[0].clone());
+  return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color}));
+}
+
+function buildAxes(v) {
+  disposeGroup(axisGroup);
+  if(!$('chkAxis').checked) return;
+  const R=v.Hub+v.Span;
+  axisGroup.add(new THREE.AxesHelper(Math.max(80,R*0.55)));
+  const windDir=new THREE.Vector3(0,0,-1);
+  const arrow=new THREE.ArrowHelper(windDir,new THREE.Vector3(0,0,R*0.8),R*0.55,0x10b981,R*0.08,R*0.04);
+  axisGroup.add(arrow);
+}
+
+function updateRotor() {
+  const v=values();
+  disposeGroup(rotorGroup);
+  if(bladeGeometry) bladeGeometry.dispose();
+  bladeGeometry=buildBladeGeometry(v);
+  const bladeCount=currentView==='blade'?1:v.Blades;
+  for(let i=0;i<bladeCount;i++) {
+    const holder=new THREE.Group();
+    const mesh=new THREE.Mesh(bladeGeometry,bladeMaterial);
+    mesh.castShadow=true; mesh.receiveShadow=true;
+    holder.add(mesh);
+    if($('chkSections').checked) {
+      holder.add(sectionLine(0.05,v,0xef4444),sectionLine(0.5,v,0xf59e0b),sectionLine(1,v,0x06b6d4));
+      const axisPts=[];
+      for(let k=0;k<=40;k++) {
+        const s=k/40,g=localGeometry(s,v);
+        const base=transformPoint(new THREE.Vector2(0.25,0),s,v);
+        axisPts.push(base);
+      }
+      holder.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(axisPts),new THREE.LineBasicMaterial({color:0xfacc15})));
+    }
+    holder.rotation.z=(Math.PI*2*i)/v.Blades;
+    rotorGroup.add(holder);
+  }
+  if(currentView==='rotor') {
+    const hub=new THREE.Mesh(new THREE.CylinderGeometry(v.Hub*1.05,v.Hub*1.05,Math.max(22,v.Root*0.8),48),hubMaterial);
+    hub.rotation.x=Math.PI/2;
+    rotorGroup.add(hub);
+    const spinner=new THREE.Mesh(new THREE.SphereGeometry(v.Hub*1.06,48,24,0,Math.PI*2,0,Math.PI/2),hubMaterial);
+    spinner.rotation.x=Math.PI/2; spinner.scale.z=1.55; spinner.position.z=v.Root*0.35;
+    rotorGroup.add(spinner);
+  }
+  buildAxes(v);
+  updateOutputs(v);
+  drawAirfoil();
+}
+
+function updateOutputs(v) {
+  const R=(v.Hub+v.Span)/1000, diameter=2*R, area=Math.PI*R*R;
+  const omega=2*Math.PI*v.RPM/60, tip=omega*R, tsr=v.Wind>0?tip/v.Wind:0;
+  const avgChord=v.Root*(1+v.Taper)/2/1000;
+  const solidity=v.Blades*avgChord/(Math.PI*R);
+  $('outDiameter').textContent=`${diameter.toFixed(3)} m`;
+  $('outArea').textContent=`${area.toFixed(3)} m²`;
+  $('outOmega').textContent=`${omega.toFixed(2)} rad/s`;
+  $('outTipSpeed').textContent=`${tip.toFixed(2)} m/s`;
+  $('outTSR').textContent=tsr.toFixed(2);
+  $('outSolidity').textContent=`${(solidity*100).toFixed(1)}%`;
+}
+
+function drawAirfoil() {
+  const canvas=$('airfoilCanvas'),ctx=canvas.getContext('2d'),pts=getAirfoilPoints();
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const pad=42,w=canvas.width-2*pad,h=canvas.height-2*pad;
+  ctx.strokeStyle='#cbd5e1';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(pad,canvas.height/2);ctx.lineTo(canvas.width-pad,canvas.height/2);ctx.stroke();
+  const ys=pts.map(p=>p.y), ymin=Math.min(...ys), ymax=Math.max(...ys), scaleY=Math.min(w,h/Math.max(0.18,ymax-ymin));
+  ctx.strokeStyle='#2563eb';ctx.fillStyle='rgba(37,99,235,.12)';ctx.lineWidth=4;ctx.beginPath();
+  pts.forEach((p,i)=>{const x=pad+p.x*w,y=canvas.height/2-p.y*scaleY;(i?ctx.lineTo(x,y):ctx.moveTo(x,y));});ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(pad+.25*w,35);ctx.lineTo(pad+.25*w,canvas.height-35);ctx.stroke();
+  const code=$('inpNACA').value;
+  $('airfoilInfo').innerHTML=customAirfoil?`<b>Profil tersuai</b><br>${pts.length} titik koordinat.`:`<b>NACA ${code}</b><br>Camber maks. ${code[0]}% chord · lokasi ${Number(code[1])*10}% chord · ketebalan ${code.slice(2)}% chord.`;
+}
+
+function parseDat(text) {
+  const pts=[];
+  for(const raw of text.split(/\r?\n/)) {
+    const line=raw.trim().replace(/,/g,' ');
+    if(!line || /^[A-Za-z]/.test(line)) continue;
+    const nums=line.split(/\s+/).map(Number);
+    if(nums.length>=2 && Number.isFinite(nums[0])&&Number.isFinite(nums[1])) pts.push(new THREE.Vector2(nums[0],nums[1]));
+  }
+  if(pts.length<20) throw new Error('Fail memerlukan sekurang-kurangnya 20 titik koordinat.');
+  const minX=Math.min(...pts.map(p=>p.x)),maxX=Math.max(...pts.map(p=>p.x));
+  if(maxX-minX<=0) throw new Error('Julat koordinat x tidak sah.');
+  return pts.map(p=>new THREE.Vector2((p.x-minX)/(maxX-minX),p.y/(maxX-minX)));
+}
+
+function exportSTL(target,name) {
+  target.updateMatrixWorld(true);
+  const data=new STLExporter().parse(target,{binary:true});
+  const blob=new Blob([data],{type:'model/stl'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),500);
+}
+
+function setCamera(kind) {
+  const v=values(),R=v.Hub+v.Span,dist=Math.max(350,R*2.5);
+  if(kind==='front') camera.position.set(0,0,dist);
+  if(kind==='side') camera.position.set(dist,0,0);
+  if(kind==='iso') camera.position.set(dist*.72,dist*.55,dist*.72);
+  controls.target.set(0,0,0);controls.update();
+}
+
+let timer;
+function scheduleUpdate(){clearTimeout(timer);timer=setTimeout(updateRotor,35);}
+for(const [key,id] of Object.entries(inputMap)) {
+  $(id).addEventListener('input',e=>{
+    const decimals=key==='Taper'?2:key==='Wind'?1:0;
+    $(`val${key}`).textContent=Number(e.target.value).toFixed(decimals);
+    scheduleUpdate();
+  });
+}
+$('inpNACA').addEventListener('change',()=>{customAirfoil=null;$('inpFile').value='';$('fileStatus').textContent='Menggunakan profil NACA terbina dalam.';updateRotor();});
+$('inpFile').addEventListener('change',e=>{
+  const file=e.target.files[0];if(!file)return;
+  const reader=new FileReader();reader.onload=()=>{try{customAirfoil=parseDat(reader.result);$('fileStatus').textContent=`${file.name}: ${customAirfoil.length} titik diterima.`;updateRotor();}catch(err){customAirfoil=null;$('fileStatus').textContent=err.message;}};reader.readAsText(file);
+});
+$('chkSections').addEventListener('change',updateRotor);$('chkAxis').addEventListener('change',updateRotor);
+$('btnRotor').addEventListener('click',()=>{currentView='rotor';$('btnRotor').classList.add('active');$('btnBlade').classList.remove('active');updateRotor();});
+$('btnBlade').addEventListener('click',()=>{currentView='blade';$('btnBlade').classList.add('active');$('btnRotor').classList.remove('active');updateRotor();});
+document.querySelectorAll('.camera-btn').forEach(b=>b.addEventListener('click',()=>setCamera(b.dataset.camera)));
+$('btnExportBlade').addEventListener('click',()=>{const holder=rotorGroup.children.find(o=>o.type==='Group');if(holder)exportSTL(holder,'Blade_Education_Model_mm.stl');});
+$('btnExportRotor').addEventListener('click',()=>exportSTL(rotorGroup,'Rotor_Education_Model_mm.stl'));
+$('btnReset').addEventListener('click',()=>{
+  const d={Blades:3,Hub:20,Span:200,Root:45,Taper:.3,RootTwist:20,TipTwist:4,Pitch:0,Sweep:0,RPM:300,Wind:5};
+  for(const [k,val] of Object.entries(d)){ $(inputMap[k]).value=val;$(`val${k}`).textContent=Number(val).toFixed(k==='Taper'?2:k==='Wind'?1:0); }
+  $('inpNACA').value='4412';$('inpFile').value='';customAirfoil=null;currentView='rotor';$('btnRotor').classList.add('active');$('btnBlade').classList.remove('active');updateRotor();setCamera('iso');
+});
+
+window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));});
+const clock=new THREE.Clock();
+function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05),rpm=Number($('inpRPM').value);if(rpm>0&&currentView==='rotor'){const physical=$('chkPhysical').checked;const omega=2*Math.PI*rpm/60;rotorGroup.rotation.z-=omega*dt*(physical?1:.08);}controls.update();renderer.render(scene,camera);}
+updateRotor();setCamera('iso');animate();
